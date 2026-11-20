@@ -20,10 +20,10 @@ Registrar alcance MVP, roles, flujos, modelo de datos, interfaces, riesgos, crit
 | Capa | Requisito |
 |---|---|
 | Mobile/web | Una base compartida para Android, iOS y web; propuesta inicial Expo + React Native + React Native Web + Expo Router + TypeScript. Validar compatibilidad y documentar excepciones. |
-| Backend | Django, Django REST Framework, PostgreSQL; usar convenciones y versiones del stack AAD existente. |
+| Backend | Django 6.1.x (>=6.1,<6.2), Python 3.13, Django REST Framework y PostgreSQL; fijar versiones exactas en lockfile y validar compatibilidad de todas las dependencias en CI. |
 | Tareas | Celery + Redis cuando haya trabajos asíncronos justificados (sincronización, importaciones, etc.). |
-| CMS editorial | `/cms/`: interfaz editorial con permisos, borradores, vista previa y publicación; reutilizar CMS AAD existente si es compatible. |
-| Administración | `/admin/`: Django admin para gestión operativa y editorial de modelos, permisos, auditoría y configuración. No exponer secretos. |
+| CMS editorial | Prefijo configurable `CMS_URL_PREFIX` (por defecto `/cms/`): interfaz editorial con permisos, borradores, vista previa y publicación; reutilizar CMS AAD existente si es compatible. |
+| Administración | Prefijo configurable `ADMIN_URL_PREFIX` (por defecto `/admin/`): Django admin para gestión operativa y editorial de modelos, permisos, auditoría y configuración. No exponer secretos. |
 | Design system | PLT Design System como fuente de tokens, componentes, iconografía y patrones de interacción. Adaptar tokens a componentes nativos cuando CSS no sea compatible; mantener paridad visual, no forzar clases web en mobile. |
 | Comercio | Shopify como fuente canónica de catálogo comercial, precios, variantes, inventario, carrito y checkout/órdenes. Usar Storefront API desde el cliente o la capa backend según credenciales; Admin API únicamente en servidor. |
 | Storefront | Experiencia de tienda digital en web y mobile, con componentes PLT. Si el storefront web existente usa Hydrogen, reutilizar o integrar sus rutas/contratos en lugar de duplicar el catálogo; documentar topología y navegación. |
@@ -31,7 +31,37 @@ Registrar alcance MVP, roles, flujos, modelo de datos, interfaces, riesgos, crit
 
 Django es la fuente de verdad de usuarios de la aplicación, roles, datos propios, workflow y auditoría. CMS editorial: determinar explícitamente si el origen canónico será Git o Django según el proyecto; si aplica el CMS AAD basado en Git, no crear un segundo origen editable independiente. Shopify conserva la autoridad comercial. No replicar inventario como segundo origen de verdad ni manejar datos de tarjeta. Checkout mediante mecanismos soportados por Shopify para cada plataforma.
 
-Definir `/api/v1/`, `/cms/`, `/admin/`, storefront web y rutas mobile. Si hay varios hosts, conservar las rutas exigidas en el host backend y documentar CORS, cookies, CSRF, deep links y orígenes. Usar sesión segura para admin/CMS web y autenticación mobile con expiración, revocación y almacenamiento seguro conforme al mecanismo AAD existente. No confundir cuentas Django con cuentas Shopify.
+Definir `/api/v1/`, prefijos CMS/admin configurables, storefront web y rutas mobile. Si hay varios hosts, conservar las rutas configuradas en el host backend y documentar CORS, cookies, CSRF, deep links y orígenes. Usar sesión segura para admin/CMS web y autenticación mobile con expiración, revocación y almacenamiento seguro conforme al mecanismo AAD existente. No confundir cuentas Django con cuentas Shopify.
+
+### Contrato de configuración de rutas
+
+El proyecto host define los prefijos en Django settings, con valores de entorno opcionales. Los valores internos de Django son relativos, sin barra inicial y con barra final; los valores públicos son /cms/ y /admin/ por defecto.
+
+```python
+# settings.py
+import os
+
+CMS_URL_PREFIX = os.getenv("CMS_URL_PREFIX", "cms/")
+ADMIN_URL_PREFIX = os.getenv("ADMIN_URL_PREFIX", "admin/")
+```
+
+```python
+# urls.py (ejemplo; ajustar al URLconf editorial realmente importado)
+from django.conf import settings
+from django.contrib import admin
+from django.urls import include, path
+
+urlpatterns = [
+    path(settings.ADMIN_URL_PREFIX, admin.site.urls),
+    path(settings.CMS_URL_PREFIX, include("content.urls")),
+]
+```
+
+El agente debe comprobar cuál URLconf sirve la interfaz editorial React real; en shopify-django-md-cms puede corresponder a django_admin_react.urls en lugar de content.urls. Registrar namespaces estables, usar reverse()/url y proporcionar las URLs resueltas al frontend. No duplicar ni confundir la ruta pública editorial con los endpoints internos del AdminSite. Validar los prefijos al arrancar (formato relativo, sin colisiones o solapamientos con rutas reservadas ni entre sí). Probar valores predeterminados y alternativos, redirects, enlaces internos, permisos, assets, proxy y smoke tests de staging. Documentar las variables en .env.example y en la configuración Coder/staging; cambiar los prefijos requiere reiniciar el servicio.
+
+### Política de versiones Django
+
+Usar Django 6.1.x con Python 3.13 como baseline inicial; resolver el último parche de seguridad compatible y fijarlo en lockfile. No heredar automáticamente el pin Django 5.2 del prototipo django-mobile-app ni el rango abierto Django>=6.0 del CMS. Adaptar los componentes importados en el proyecto destino; no modificar los repositorios fuente sin autorización. Validar resolución de dependencias, django check, migraciones, pruebas de admin/CMS/API y compilación del frontend antes de certificar compatibilidad. Si una dependencia bloquea Django 6.1, registrar el conflicto y proponer una corrección; no degradar silenciosamente el baseline. Revisar futuras actualizaciones menores mediante ADR y CI.
 
 ### Esquema lógico
 
@@ -107,7 +137,8 @@ Flujo: planificar -> asignar -> implementar -> probar -> integrar dev en staging
 - [ ] Código integrado en `staging/<branch>` con commit identificable y CI verde.
 - [ ] Workspace Coder nuevo inicia la aplicación siguiendo documentación reproducible.
 - [ ] Backend Django y PostgreSQL funcionan, migraciones aplicadas y API probada.
-- [ ] `/cms/` y `/admin/` funcionan con autenticación y permisos separados; existe un flujo editorial comprobado.
+- [ ] CMS y Admin funcionan en los prefijos configurados (por defecto `/cms/` y `/admin/`) con permisos separados; pruebas verifican rutas predeterminadas y alternativas, ausencia de colisiones y flujo editorial.
+- [ ] Django 6.1.x y Python 3.13 fijados reproduciblemente; resolución, migraciones y suite de compatibilidad verificadas.
 - [ ] Web responsive operativa y validada en navegador móvil y desktop.
 - [ ] Android e iOS ejecutados en dispositivos o entornos de prueba adecuados; evidencia por plataforma. Si no se dispone de firma o distribución iOS, declarar el bloqueo, no marcar entrega mobile completa.
 - [ ] PLT Design System aplicado y adaptaciones nativas documentadas.
